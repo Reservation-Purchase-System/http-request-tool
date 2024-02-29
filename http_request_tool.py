@@ -3,18 +3,17 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import requests
+import time
 
 
 def create_reservation_product(user_id, name, content, price, stock,
     is_reserved, open_at):
-  api_endpoint = "http://localhost:8084/api/v1/products"
+  api_endpoint = "http://localhost:8083/test/product-service/products"
 
-  # 요청 헤더에 필요한 데이터
   headers = {
     "X-USER-ID": str(user_id)
   }
 
-  # 상품 생성 요청 데이터
   request_body = {
     "name": name,
     "content": content,
@@ -24,80 +23,73 @@ def create_reservation_product(user_id, name, content, price, stock,
     "openAt": open_at
   }
 
-  # 상품 생성 API 호출
   response = requests.post(api_endpoint, headers=headers, json=request_body)
 
-  # 응답 확인
   if response.status_code == 201:
     print("상품 생성 성공")
-    print("생성된 상품 ID:", response.headers["Location"])  # 생성된 상품 ID 확인
+    print("생성된 상품 ID:", response.headers["Location"])
     return int(response.headers["Location"].split('/')[-1])
   else:
     print("상품 생성 실패:", response.json())
 
 
 def scenario(user_id, product_id):
-  with requests.Session() as session:
-    session.keep_alive = False  # 세션에서 keep-alive 옵션 비활성화
+  # 남은 재고 조회
+  url = f"http://localhost:8083/test/stock-service/stocks/{product_id}"
 
-    # 예약 상품 남은 수량 조회
-    url = f"http://localhost:8087/api/v1/stocks/{product_id}"
-    response = session.get(url)
-    print(f"User {user_id}: findStock - {response.json()}")
+  try:
+    response = requests.get(url, verify=False)
+    print(f"User {user_id}: 결제 전 상품 재고 - {response.json()}")
+  except Exception as e:
+    print(f"Stock Error : {e}")
+    return
 
-  # 결제 화면 진입
-  # 요청 헤더에 필요한 데이터
-  url = "http://localhost:8086/api/v1/purchases"
+  # 주문 생성
+  url = "http://localhost:8083/test/purchase-service/purchases"
   headers = {
     "X-USER-ID": str(user_id)
   }
 
   try:
-    # 주문 생성 요청 데이터
-    request_body = {
-      "productId": product_id,  # 상품 ID를 사용하도록 수정
+    body = {
+      "productId": product_id,
       "quantity": 1,
       "address": "주소"
     }
 
-    # 주문 생성 API 호출
-    with requests.post(url, headers=headers, json=request_body) as response:
-      print(f"User {user_id}: 주문 ID - ",
-            int(response.headers["Location"].split('/')[-1]))
-      response_url = response.headers["Location"]
-      purchase_id = int(response_url.split("/")[-1])
+    response = requests.post(url, headers=headers, json=body, verify=False)
+    print(f"User {user_id}: 주문 ID - ",
+          int(response.headers["Location"].split('/')[-1]))
+    response_url = response.headers["Location"]
+    purchase_id = int(response_url.split("/")[-1])
+  except Exception as e:
+    print(f"Create Purchase Error : {e}")
+    return
 
-      # 20% 확률로 주문 취소
-      random_num = random.randint(0, 99)
-      if random_num < 20:
-        cancel_url = f"http://localhost:8086/api/v1/purchases/{purchase_id}"  # 주문 ID를 사용하도록 수정
-        try:
-          with requests.delete(cancel_url):
-            print(f"User {user_id}: 주문 취소 완료 - ", purchase_id)
-            return  # 주문 취소 시에는 함수 종료
+  random_num = random.randint(0, 99)
+  if random_num < 20:
+    url = f"http://localhost:8083/test/purchase-service/purchases/{purchase_id}"
+    try:
+      response = requests.delete(url, verify=False)
+      print(f"Purchase Cancel Finished - ", purchase_id)
+      return
+    except Exception as e:
+      print(f"Cancel Purchase Error : {e}")
+      return
 
-        except Exception as ex:
-          print(f"User {user_id}: 주문 취소 Error : {response.json()}")
-          return # 함수 종료
-
-    # 주문이 취소되지 않은 경우에만 결제 요청 API 실행
-    payment_url = "http://localhost:8085/api/v1/payments"
-    payment_request_body = {
+  url = "http://localhost:8083/test/payment-service/payments"
+  try:
+    body = {
       "purchaseId": purchase_id
     }
-    with requests.post(payment_url, headers=headers,
-                       json=payment_request_body) as payment_response:
-      if payment_response.status_code == 200:
-        print(f"User {user_id}: 결제 성공!", payment_response)
-      else:
-        print(f"User {user_id}: 결제 실패 - ", payment_response)
-
-  except Exception as ex:
-    print(f"User {user_id}: 결제 화면 진입(주문) Error : {response.json()}")
+    response = requests.post(url, headers=headers, json=body, verify=False)
+    print(f"User {user_id}: 결제 - {response.json()}")
+  except Exception as e:
+    print(f"Payment Error : {e}")
+    return
 
 
 def main():
-  # 예약 상품 생성
   user_id = 1
   name = "상품 이름"
   content = "상품 설명"
@@ -105,15 +97,14 @@ def main():
   stock = 10
   is_reserved = True
   open_at = (
-        datetime.now() + timedelta(days=random.randint(-30, 2))).isoformat()
+      datetime.now() + timedelta(days=random.randint(-30, 0))).isoformat()
 
   product_id = create_reservation_product(user_id, name, content, price, stock,
                                           is_reserved, open_at)
 
-  # 결제 시나리오 요청
   num_requests = 10000
 
-  with ThreadPoolExecutor(max_workers=1000) as executor:
+  with ThreadPoolExecutor(max_workers=100) as executor:
     tasks = [executor.submit(scenario, user_id, product_id) for user_id in
              range(1, num_requests + 1)]
 
@@ -122,4 +113,9 @@ def main():
 
 
 if __name__ == "__main__":
+  start_time = time.time()
   main()
+  end_time = time.time()
+
+  execution_time = end_time - start_time
+  print("코드 실행 시간:", execution_time, "초")
