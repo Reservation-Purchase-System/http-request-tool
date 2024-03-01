@@ -34,16 +34,6 @@ def create_reservation_product(user_id, name, content, price, stock,
 
 
 def scenario(user_id, product_id):
-  # 남은 재고 조회
-  url = f"http://localhost:8083/test/stock-service/stocks/{product_id}"
-
-  try:
-    response = requests.get(url, verify=False)
-    print(f"User {user_id}: 결제 전 상품 재고 - {response.json()}")
-  except Exception as e:
-    print(f"Stock Error : {e}")
-    return
-
   # 주문 생성
   url = "http://localhost:8083/test/purchase-service/purchases"
   headers = {
